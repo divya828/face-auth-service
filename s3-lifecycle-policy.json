@@ -1,0 +1,17 @@
+{
+  "Rules": [
+    {
+      "ID": "fraud-reviews-to-glacier-deep-archive-90d",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "fraud_reviews/"
+      },
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "DEEP_ARCHIVE"
+        }
+      ]
+    }
+  ]
+}

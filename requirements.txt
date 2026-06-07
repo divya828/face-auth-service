@@ -1,0 +1,35 @@
+# ---------------------------------------------------------------------------
+# Pinned dependencies for the face-verification pipeline.
+#
+# Hard constraints:
+#   * numpy<2.0.0       -> TensorFlow 2.14 / DeepFace break under numpy 2.x
+#   * tensorflow==2.14  -> matches CUDA 11.8 + cuDNN 8 base image
+#   * tf-keras          -> DeepFace requires the legacy Keras API on TF>=2.13
+#   * pgvector          -> python adapter for sending/receiving vector() columns
+# ---------------------------------------------------------------------------
+
+# --- Web framework / server ---
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+pydantic==2.7.4
+pydantic-settings==2.3.4
+
+# --- Deep learning core ---
+numpy<2.0.0
+tensorflow==2.14.1
+tf-keras==2.14.1
+deepface==0.0.92
+retina-face==0.0.17
+
+# --- Data / caching ---
+psycopg2-binary==2.9.9
+pgvector==0.3.0
+redis==5.0.7
+
+# --- AWS cold storage ---
+boto3==1.34.131
+
+# --- Image handling ---
+opencv-python-headless==4.10.0.84
+Pillow==10.3.0
