@@ -1,0 +1,11 @@
+# Test / dev dependencies. Install on top of requirements.txt:
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# Tier 1 (logic tests) needs only the lightweight web stack + pytest; it mocks
+# the heavy DeepFace/DB/Redis pieces so it runs with no GPU and no services.
+# Tier 2 (integration) additionally imports the real psycopg2/redis drivers,
+# which come from requirements.txt.
+
+pytest==8.2.2
+pytest-asyncio==0.23.7
+httpx==0.27.0          # FastAPI TestClient transport

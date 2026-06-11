@@ -118,6 +118,68 @@ aws s3api put-bucket-lifecycle-configuration \
 
 ---
 
+## Testing
+
+Testing splits into three tiers by how much infrastructure each needs. Tiers 1
+and 2 run locally and in CI (`.github/workflows/ci.yml`); Tier 3 can only run on
+the real GPU box.
+
+Install the test deps:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+### Tier 1 — logic tests (no GPU, no services) — *seconds*
+
+Mocks DeepFace embedding, PostgreSQL, Redis, and S3, then drives the API with
+FastAPI's `TestClient`. Verifies routing, the `0.40` threshold boundary, the
+`422 no_face_detected:selfie|document` reporting, rate limiting, and that
+`/compare` persists nothing.
+
+```bash
+pytest -m "not integration"
+```
+
+### Tier 2 — integration with real PostgreSQL + Redis (Docker) — *minutes*
+
+Brings up `pgvector/pgvector` + `redis` and runs the real `db`/`limiter`
+singletons. Embedding is still mocked (inference is Tier 3). Proves the SQL, the
+pgvector `vector(512)` adapter round-trip, that `<=>` distance agrees with the
+in-Python `cosine_distance`, and the Redis `INCR`/`EXPIRE` limiter.
+
+```bash
+docker compose -f docker-compose.test.yml up -d        # ports 5433 / 6380
+PG_HOST=localhost PG_PORT=5433 PG_DB=faces PG_USER=postgres PG_PASSWORD=postgres \
+REDIS_HOST=localhost REDIS_PORT=6380 \
+  pytest -m integration
+docker compose -f docker-compose.test.yml down -v
+```
+
+### Tier 3 — full GPU end-to-end (the g6.xlarge) — *deploy*
+
+Only the L4 box validates the CUDA image, mixed precision, VRAM warmup, real
+ArcFace inference, and the GPU health check. Run the container, then exercise the
+endpoints with real JPEGs:
+
+```bash
+docker build -t face-auth-service .
+docker run --gpus all --env-file .env -p 8000:8000 face-auth-service
+
+# GPU + dependencies must all report healthy:
+curl -s localhost:8000/api/v1/health | jq
+# -> {"status":"ok","checks":{"postgres":true,"redis":true,"gpu_visible":true,"gpu_count":1}}
+
+# Real selfie vs document comparison:
+curl -X POST localhost:8000/api/v1/compare \
+  -F "selfie=@selfie.jpg" -F "document=@id_card_face.jpg"
+```
+
+The first inference call downloads ArcFace/retinaface weights and is slow; the
+lifespan warmup front-loads this so the first *real* request isn't cold.
+
+---
+
 ## Log format
 
 Every log line is a single JSON object suitable for CloudWatch Logs Insights.

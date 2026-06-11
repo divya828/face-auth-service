@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Tier 1: fast logic tests. Heavy deps (tensorflow/deepface) are mocked, so we
+  # install only the lightweight web + test stack -- no GPU, no services.
+  unit:
+    name: Tier 1 - unit/logic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install lightweight deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi pydantic-settings python-multipart numpy \
+                      -r requirements-dev.txt
+      - name: Run Tier 1 (mocked, no services)
+        run: pytest -m "not integration" -q
+
+  # Tier 2: integration against real PostgreSQL+pgvector and Redis service
+  # containers. Embedding is still mocked; this validates SQL, the pgvector
+  # adapter, `<=>` distance ordering, and the Redis rate limiter.
+  integration:
+    name: Tier 2 - integration (pgvector + redis)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: faces
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d faces"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      PG_HOST: localhost
+      PG_PORT: 5432
+      PG_DB: faces
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install deps (web + DB/Redis drivers + test)
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi pydantic-settings python-multipart numpy \
+                      psycopg2-binary pgvector redis \
+                      -r requirements-dev.txt
+      - name: Load schema into Postgres
+        run: |
+          pip install --quiet psycopg2-binary
+          PGPASSWORD=postgres psql -h localhost -U postgres -d faces -f schema.sql
+      - name: Run Tier 2 integration
+        run: pytest -m integration -v
