@@ -15,13 +15,21 @@ from fastapi.concurrency import run_in_threadpool
 
 from app.config import settings
 from app.database import db
-from app.embeddings.arcface import embed
+from app.embeddings.arcface import cosine_distance, embed
 from app.logging_config import emit
 from app.storage import archive_rejected
 
 
 class NoFaceDetected(Exception):
-    """Raised when no face can be detected/embedded from the payload."""
+    """Raised when no face can be detected/embedded from the payload.
+
+    `which` identifies the offending image for stateless multi-image flows
+    ("selfie" / "document"); None for the single-image register/verify paths.
+    """
+
+    def __init__(self, which: Optional[str] = None) -> None:
+        super().__init__(which or "no_face_detected")
+        self.which = which
 
 
 class UserNotEnrolled(Exception):
@@ -31,6 +39,13 @@ class UserNotEnrolled(Exception):
 @dataclass
 class VerifyResult:
     user_id: str
+    match: bool
+    distance: float
+    threshold: float
+
+
+@dataclass
+class CompareResult:
     match: bool
     distance: float
     threshold: float
@@ -104,6 +119,47 @@ async def verify_face(user_id: str, payload: bytes) -> VerifyResult:
     )
     return VerifyResult(
         user_id=user_id,
+        match=matched,
+        distance=round(distance, 4),
+        threshold=settings.cosine_threshold,
+    )
+
+
+async def compare_faces(selfie: bytes, document: bytes) -> CompareResult:
+    """Stateless 1:1 comparison of a live selfie against a document (OVD) photo.
+
+    Embeds both images, computes cosine distance in-process (no database, no
+    storage), and applies the same strict cutoff as verify. Raises NoFaceDetected
+    identifying which image failed. Nothing is persisted or archived.
+    """
+    t0 = time.perf_counter()
+
+    t_inf = time.perf_counter()
+    try:
+        selfie_vec = await run_in_threadpool(embed, selfie)
+    except ValueError as exc:
+        emit("compare", result="no_face_detected", which="selfie")
+        raise NoFaceDetected("selfie") from exc
+    try:
+        document_vec = await run_in_threadpool(embed, document)
+    except ValueError as exc:
+        emit("compare", result="no_face_detected", which="document")
+        raise NoFaceDetected("document") from exc
+    inference_ms = (time.perf_counter() - t_inf) * 1000
+
+    distance = cosine_distance(selfie_vec, document_vec)
+    matched = distance <= settings.cosine_threshold
+    total_ms = (time.perf_counter() - t0) * 1000
+
+    emit(
+        "compare",
+        result="match" if matched else "reject",
+        distance=round(distance, 4),
+        threshold=settings.cosine_threshold,
+        inference_ms=round(inference_ms, 2),
+        total_ms=round(total_ms, 2),
+    )
+    return CompareResult(
         match=matched,
         distance=round(distance, 4),
         threshold=settings.cosine_threshold,

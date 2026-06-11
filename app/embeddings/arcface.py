@@ -35,3 +35,17 @@ def embed(payload: bytes) -> np.ndarray:
     if not reps:
         raise ValueError("no_face_detected")
     return np.asarray(reps[0]["embedding"], dtype=np.float32)
+
+
+def cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """Cosine distance between two embeddings, matching pgvector's `<=>` operator.
+
+    Returns `1 - cosine_similarity` in [0, 2]; lower == more similar. Used for the
+    stateless /compare path where no row exists in the database to run `<=>` against.
+    """
+    a = a.astype(np.float64)
+    b = b.astype(np.float64)
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom == 0.0:
+        return 1.0
+    return 1.0 - float(np.dot(a, b) / denom)

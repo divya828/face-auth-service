@@ -34,6 +34,7 @@ tight similarity cutoff to suppress lookalikes and spoofs.
 |--------|----------------------|-------------|
 | `POST` | `/api/v1/register`   | Enroll a face. Form fields: `user_id`, `image` (JPEG). |
 | `POST` | `/api/v1/verify`     | Verify a face against the enrolled embedding. Rate-limited per `user_id`. |
+| `POST` | `/api/v1/compare`    | Stateless 1:1 comparison of a `selfie` against a `document` (OVD) photo. No storage. |
 | `GET`  | `/api/v1/health`     | Liveness of PostgreSQL, Redis, and GPU visibility. |
 
 ### Example
@@ -47,11 +48,23 @@ curl -X POST http://localhost:8000/api/v1/register \
 curl -X POST http://localhost:8000/api/v1/verify \
   -F "user_id=alice" -F "image=@probe.jpg"
 # -> {"user_id":"alice","match":true,"distance":0.2317,"threshold":0.4}
+
+# Compare a live selfie against a document (OVD) photo -- stateless, no storage
+curl -X POST http://localhost:8000/api/v1/compare \
+  -F "selfie=@selfie.jpg" -F "document=@id_card_face.jpg"
+# -> {"match":true,"distance":0.2980,"threshold":0.4}
 ```
 
 Verify responses: `429` rate-limited, `404` user not enrolled, `422` no face
 detected, `200` with `match: true|false`. Failed/rejected attempts have their
 JPEG streamed to `s3://payment-fraud-review-snapshots/fraud_reviews/<user_id>/`.
+
+`/compare` is stateless: it embeds both images, computes cosine distance
+in-process, applies the same `0.40` cutoff, and persists **nothing** (no database
+row, no S3 archive). On a missing face it returns `422` with
+`no_face_detected:selfie` or `no_face_detected:document` so the caller knows which
+image to re-capture. It is **not** rate-limited (no `user_id`) and has **no
+liveness/anti-spoofing** — a printed photo of the genuine face will still match.
 
 ---
 
@@ -133,6 +146,7 @@ Fields emitted per action:
 |-------------|-----------|
 | `register`  | `user_id`, `result`, `inference_ms`, `db_ms`, `total_ms` |
 | `verify`    | `user_id`, `result` (`match`/`reject`/`rate_limited`/`no_face_detected`/`unknown_user`), `distance`, `threshold`, `inference_ms`, `db_ms`, `total_ms` |
+| `compare`   | `result` (`match`/`reject`/`no_face_detected`), `which` (on no-face), `distance`, `threshold`, `inference_ms`, `total_ms` |
 | `s3_archive`| `user_id`, `s3_key`, `reason` |
 | startup/shutdown | lifecycle markers |
 
